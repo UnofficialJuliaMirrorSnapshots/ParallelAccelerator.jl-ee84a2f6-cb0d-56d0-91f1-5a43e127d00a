@@ -1,0 +1,109 @@
+language: julia
+
+# Use Ubuntu 14.04 on Travis, which makes it possible to use gcc 4.8.
+sudo: required
+dist: trusty
+
+os:
+  - linux
+  - osx
+
+julia:
+  - 0.6
+  - nightly
+
+matrix:
+  allow_failures:
+    - julia: nightly
+
+env:
+    - PROSPECT_DEV_MODE=1 TEST_SUITE=pa-tests
+    - PROSPECT_DEV_MODE=1 TEST_SUITE=pa-examples
+    - PROSPECT_DEV_MODE=1 TEST_SUITE=hpat-tests
+    - JULIA_NUM_THREADS=1 PROSPECT_MODE=THREADS PROSPECT_DEV_MODE=1 TEST_SUITE=pa-tests-native
+    - JULIA_NUM_THREADS=1 PROSPECT_MODE=THREADS PROSPECT_DEV_MODE=1 TEST_SUITE=pa-examples-native
+
+script:
+  - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+  - if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then sudo apt-get update -qq; fi
+  - if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then sudo apt-get install -qq gcc g++ gfortran; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
+
+  # Add OpenBLAS.
+  - if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then sudo apt-get install -qq libopenblas-dev; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install homebrew/science/openblas; fi
+
+  # On Mac in particular, we need a couple of env vars set to be able to use OpenBLAS.
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/opt/openblas/lib; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then export CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH:/usr/local/opt/openblas/include/; fi
+
+  # Pull in and build CompilerTools dependency.
+  - julia -e 'Pkg.clone("https://github.com/IntelLabs/CompilerTools.jl")'
+  - julia -e 'Pkg.build("CompilerTools")'
+  # Add packages necessary to run examples.
+  - julia -e 'Pkg.add("DocOpt"); Pkg.add("Images"); Pkg.add("ImageMagick"); Pkg.add("Winston")'
+  # Build ParallelAccelerator.
+  - julia -e 'Pkg.clone(pwd()); Pkg.build("ParallelAccelerator")'
+
+  # Run tests.
+  - if [ $TEST_SUITE = 'pa-tests' ]; then 
+    julia --code-coverage=user test/runtests.jl;
+    julia -e 'cd(Pkg.dir("ParallelAccelerator")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())';
+    fi
+
+  # Run tests.
+  - if [ $TEST_SUITE = 'pa-tests-native' ]; then 
+    if [[ "$TRAVIS_OS_NAME" = "linux" ]]; then 
+    if [[ "$TRAVIS_JULIA_VERSION" = "0.5" ]]; then 
+    julia --code-coverage=user test/runtests.jl;
+    julia -e 'cd(Pkg.dir("ParallelAccelerator")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())';
+    fi;
+    fi;
+    fi
+
+  # Run examples.
+  - 
+    if [ $TEST_SUITE = 'pa-examples' ]; then
+    if [[ "$TRAVIS_OS_NAME" != "osx" ]]; then 
+    julia --code-coverage=user examples/black-scholes/black-scholes.jl;
+    julia --code-coverage=user examples/boltzmann/boltzmann.jl;
+    julia --code-coverage=user examples/quant/quant.jl;
+    julia --code-coverage=user examples/gaussian-blur/gaussian-blur.jl;
+    fi;
+    julia --code-coverage=user examples/harris/harris.jl;
+    julia --code-coverage=user examples/juliaset/juliaset.jl;
+    julia --code-coverage=user examples/laplace-3d/laplace-3d.jl;
+    julia --code-coverage=user examples/opt-flow/opt-flow.jl;
+    julia --code-coverage=user examples/wave-2d/wave-2d.jl;
+    julia --code-coverage=user examples/nengo/nengo-nef.jl;
+    julia -e 'cd(Pkg.dir("ParallelAccelerator")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())';
+    fi
+
+  # Run native mode.
+  - >
+    if [ $TEST_SUITE = 'pa-examples-native' ]; then
+    if [[ "$TRAVIS_OS_NAME" = "linux" ]]; then 
+    if [[ "$TRAVIS_JULIA_VERSION" = "0.5" ]]; then 
+    julia --code-coverage=user examples/black-scholes/black-scholes.jl;
+    julia --code-coverage=user examples/boltzmann/boltzmann.jl;
+    julia --code-coverage=user examples/quant/quant.jl;
+    julia --code-coverage=user examples/gaussian-blur/gaussian-blur.jl;
+    julia --code-coverage=user examples/harris/harris.jl;
+    julia --code-coverage=user examples/juliaset/juliaset.jl;
+    julia --code-coverage=user examples/laplace-3d/laplace-3d.jl;
+    julia --code-coverage=user examples/opt-flow/opt-flow.jl;
+    julia --code-coverage=user examples/wave-2d/wave-2d.jl;
+    julia --code-coverage=user examples/nengo/nengo-nef.jl;
+    julia -e 'cd(Pkg.dir("ParallelAccelerator")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())';
+    fi;
+    fi;
+    fi
+
+after_success:
+  # Run HPAT tests.
+  - >
+    if [ $TEST_SUITE = 'hpat-tests' ]; then
+    sudo apt-get install -y nodejs npm;
+    npm install travis-ci;
+    node trigger-build.js;
+    fi
